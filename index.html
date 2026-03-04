@@ -367,31 +367,15 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
 <div class="overlay" id="modal">
   <div class="modal">
     <h3>Upload to Dropbox</h3>
-    <p>Uploads all photos + a PDF report to Dropbox. Token stored only on this device.<br>
-    <a href="https://www.dropbox.com/developers/apps" target="_blank" style="color:#0061FF;">Get an access token →</a></p>
+    <p>Uploads all photos + PDF report to <strong>/Appraisals Active/[street address]</strong></p>
 
-    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">Dropbox Folder</label>
-    <input type="text" id="dbx-folder" value="/Appraisals Active" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
-      style="margin-bottom:6px;">
-    <p style="font-size:12px;color:var(--mid);margin-bottom:14px;">A subfolder named after the street address will be created inside this folder.</p>
+    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">Dropbox Folder <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional override)</span></label>
+    <input type="text" id="dbx-folder" value="/Appraisals Active" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" style="margin-bottom:14px;">
 
-    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">Access Token</label>
-    <input type="text" id="dbx-token" placeholder="Paste your Dropbox access token" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
-
-    <label style="display:flex;align-items:center;gap:10px;font-size:14px;color:var(--mid);margin-bottom:14px;cursor:pointer;">
-      <input type="checkbox" id="remember-token" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;">
-      Remember token on this device
-    </label>
-    <div id="token-saved-msg" style="display:none;font-size:13px;color:#2D6A4F;margin-bottom:10px;">
-      ✓ Token saved on this device
-    </div>
     <div class="modal-btns">
       <button class="bbtn mbtn-cancel" onclick="closeModal()">Cancel</button>
       <button class="bbtn mbtn-go" onclick="uploadToDropbox()">Upload</button>
     </div>
-    <button onclick="forgetToken()" id="forget-btn" style="display:none;margin-top:14px;width:100%;padding:10px;border:none;background:none;color:#c0392b;font-size:13px;font-family:'DM Sans',sans-serif;cursor:pointer;text-decoration:underline;">
-      Forget saved token
-    </button>
   </div>
 </div>
 
@@ -590,55 +574,49 @@ async function generatePDF() {
   showToast('📄 PDF saved!');
 }
 
-// ─── DROPBOX TOKEN STORAGE ─────────────────────
-const TOKEN_KEY = 'dbx_token_v1';
+// ─── DROPBOX AUTH (permanent refresh token) ────
+// App credentials — safe to include, no user data here
+const DBX_APP_KEY    = 'u8w66yg8g0oew46';
+const DBX_APP_SECRET = '3nqtdfhrj88gak4';
+const DBX_REFRESH    = '4g4HS3hatNYAAAAAAAAAAc7mA7h8aMfI3T5alPAsxwFpOOSDhucAOfb0I-xYEqNF';
 
-function openModal() {
-  const saved = localStorage.getItem(TOKEN_KEY);
-  const tokenInput = document.getElementById('dbx-token');
-  const rememberBox = document.getElementById('remember-token');
-  const savedMsg = document.getElementById('token-saved-msg');
-  const forgetBtn = document.getElementById('forget-btn');
-  if (saved) {
-    tokenInput.value = saved;
-    rememberBox.checked = true;
-    savedMsg.style.display = 'block';
-    forgetBtn.style.display = 'block';
-  } else {
-    tokenInput.value = '';
-    rememberBox.checked = false;
-    savedMsg.style.display = 'none';
-    forgetBtn.style.display = 'none';
-  }
-  document.getElementById('modal').classList.add('open');
+async function getAccessToken() {
+  // Exchange refresh token for a fresh short-lived access token
+  const res = await fetch('https://api.dropbox.com/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type:    'refresh_token',
+      refresh_token: DBX_REFRESH,
+      client_id:     DBX_APP_KEY,
+      client_secret: DBX_APP_SECRET,
+    })
+  });
+  if (!res.ok) throw new Error('Token refresh failed');
+  const data = await res.json();
+  return data.access_token;
 }
 
+function openModal()  { document.getElementById('modal').classList.add('open'); }
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 
-function forgetToken() {
-  localStorage.removeItem(TOKEN_KEY);
-  document.getElementById('dbx-token').value = '';
-  document.getElementById('remember-token').checked = false;
-  document.getElementById('token-saved-msg').style.display = 'none';
-  document.getElementById('forget-btn').style.display = 'none';
-  showToast('Token removed from this device');
-}
-
 async function uploadToDropbox() {
-  const token = document.getElementById('dbx-token').value.trim();
-  if (!token) { showToast('Please paste your Dropbox token'); return; }
+  closeModal();
+  showToast('Connecting to Dropbox…');
 
-  if (document.getElementById('remember-token').checked) {
-    localStorage.setItem(TOKEN_KEY, token);
-  } else {
-    localStorage.removeItem(TOKEN_KEY);
+  // Get a fresh access token automatically
+  let token;
+  try {
+    token = await getAccessToken();
+  } catch(e) {
+    showToast('❌ Could not connect to Dropbox. Check internet connection.');
+    return;
   }
 
   // Base folder + street subfolder
   const base = document.getElementById('dbx-folder').value.trim() || '/Appraisals Active';
   const folder = base.replace(/\/+$/, '') + '/' + streetSlug();
 
-  closeModal();
   showToast('Uploading…');
 
   let photoOk = 0;
@@ -686,9 +664,9 @@ async function uploadToDropbox() {
     if (res.ok) pdfOk = true;
   } catch(e) {}
 
-  const photoMsg = photos.length ? `${photoOk}/${photos.length} photos` : 'no photos';
-  const pdfMsg   = pdfOk ? '+ PDF' : '';
-  showToast(`✅ Uploaded ${photoMsg} ${pdfMsg} to Dropbox`);
+  const photoMsg = photos.length ? `${photoOk}/${photos.length} photos` : '0 photos';
+  const pdfMsg   = pdfOk ? ' + PDF' : '';
+  showToast(`✅ Uploaded ${photoMsg}${pdfMsg} to Dropbox`);
 }
 
 function b64toBlob(dataURL) {
