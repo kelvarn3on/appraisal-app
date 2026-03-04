@@ -208,8 +208,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
 <div class="header">
   <h1>🏠 Field Appraisal</h1>
   <div class="header-btns">
-    <button class="hbtn hbtn-pdf" onclick="generatePDF()">PDF</button>
-    <button class="hbtn hbtn-dbx" onclick="openModal()">Dropbox</button>
+    <button class="hbtn hbtn-dbx" onclick="openModal()">☁️ Upload</button>
   </div>
 </div>
 
@@ -361,21 +360,20 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
 <!-- BOTTOM BAR -->
 <div class="bottom-bar">
   <button class="bbtn bbtn-clr" onclick="clearAll()">↺ Clear</button>
-  <button class="bbtn bbtn-pdf" onclick="generatePDF()">📄 PDF</button>
-  <button class="bbtn bbtn-dbx" onclick="openModal()">☁️ Dropbox</button>
+  <button class="bbtn bbtn-dbx" onclick="openModal()" style="flex:2;">☁️ Upload to Dropbox</button>
 </div>
 
 <!-- DROPBOX MODAL -->
 <div class="overlay" id="modal">
   <div class="modal">
-    <h3>Upload Photos to Dropbox</h3>
-    <p>Choose the Dropbox folder where photos will be saved. Your token is stored only on this device.<br>
+    <h3>Upload to Dropbox</h3>
+    <p>Uploads all photos + a PDF report to Dropbox. Token stored only on this device.<br>
     <a href="https://www.dropbox.com/developers/apps" target="_blank" style="color:#0061FF;">Get an access token →</a></p>
 
-    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">Dropbox Folder Path</label>
-    <input type="text" id="dbx-folder" placeholder="e.g. /Appraisals/2024" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">Dropbox Folder</label>
+    <input type="text" id="dbx-folder" value="/Appraisals Active" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
       style="margin-bottom:6px;">
-    <p style="font-size:12px;color:var(--mid);margin-bottom:14px;">Start with / — folder will be created if it doesn't exist. Leave blank to use the street address as folder name.</p>
+    <p style="font-size:12px;color:var(--mid);margin-bottom:14px;">A subfolder named after the street address will be created inside this folder.</p>
 
     <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">Access Token</label>
     <input type="text" id="dbx-token" placeholder="Paste your Dropbox access token" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
@@ -389,7 +387,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
     </div>
     <div class="modal-btns">
       <button class="bbtn mbtn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="bbtn mbtn-go" onclick="uploadToDropbox()">Upload Photos</button>
+      <button class="bbtn mbtn-go" onclick="uploadToDropbox()">Upload</button>
     </div>
     <button onclick="forgetToken()" id="forget-btn" style="display:none;margin-top:14px;width:100%;padding:10px;border:none;background:none;color:#c0392b;font-size:13px;font-family:'DM Sans',sans-serif;cursor:pointer;text-decoration:underline;">
       Forget saved token
@@ -629,7 +627,6 @@ function forgetToken() {
 async function uploadToDropbox() {
   const token = document.getElementById('dbx-token').value.trim();
   if (!token) { showToast('Please paste your Dropbox token'); return; }
-  if (!photos.length) { showToast('No photos to upload'); return; }
 
   if (document.getElementById('remember-token').checked) {
     localStorage.setItem(TOKEN_KEY, token);
@@ -637,16 +634,16 @@ async function uploadToDropbox() {
     localStorage.removeItem(TOKEN_KEY);
   }
 
-  // Use custom folder path or fall back to street address
-  const customFolder = document.getElementById('dbx-folder').value.trim();
-  const folder = customFolder
-    ? (customFolder.startsWith('/') ? customFolder : '/' + customFolder)
-    : '/' + streetSlug();
+  // Base folder + street subfolder
+  const base = document.getElementById('dbx-folder').value.trim() || '/Appraisals Active';
+  const folder = base.replace(/\/+$/, '') + '/' + streetSlug();
 
   closeModal();
-  showToast('Uploading photos…');
+  showToast('Uploading…');
 
-  let ok = 0;
+  let photoOk = 0;
+
+  // Upload photos
   for (const p of photos) {
     try {
       const blob = b64toBlob(p.dataUrl);
@@ -663,11 +660,35 @@ async function uploadToDropbox() {
         },
         body: blob
       });
-      if (res.ok) ok++;
-    } catch(e){}
+      if (res.ok) photoOk++;
+    } catch(e) {}
   }
 
-  showToast(`✅ ${ok} of ${photos.length} photos uploaded to Dropbox`);
+  // Build and upload PDF
+  let pdfOk = false;
+  try {
+    const doc = buildPDFDoc();
+    const pdfBlob = doc.output('blob');
+    const pdfName = `${streetSlug()}_Appraisal.pdf`;
+    const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Dropbox-API-Arg': JSON.stringify({
+          path: `${folder}/${pdfName}`,
+          mode: 'add',
+          autorename: true
+        }),
+        'Content-Type': 'application/octet-stream'
+      },
+      body: pdfBlob
+    });
+    if (res.ok) pdfOk = true;
+  } catch(e) {}
+
+  const photoMsg = photos.length ? `${photoOk}/${photos.length} photos` : 'no photos';
+  const pdfMsg   = pdfOk ? '+ PDF' : '';
+  showToast(`✅ Uploaded ${photoMsg} ${pdfMsg} to Dropbox`);
 }
 
 function b64toBlob(dataURL) {
