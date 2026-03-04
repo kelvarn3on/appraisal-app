@@ -368,10 +368,18 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
 <!-- DROPBOX MODAL -->
 <div class="overlay" id="modal">
   <div class="modal">
-    <h3>Save to Dropbox</h3>
-    <p>Files are saved to a folder named after the street address.<br>
+    <h3>Upload Photos to Dropbox</h3>
+    <p>Choose the Dropbox folder where photos will be saved. Your token is stored only on this device.<br>
     <a href="https://www.dropbox.com/developers/apps" target="_blank" style="color:#0061FF;">Get an access token →</a></p>
+
+    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">Dropbox Folder Path</label>
+    <input type="text" id="dbx-folder" placeholder="e.g. /Appraisals/2024" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+      style="margin-bottom:6px;">
+    <p style="font-size:12px;color:var(--mid);margin-bottom:14px;">Start with / — folder will be created if it doesn't exist. Leave blank to use the street address as folder name.</p>
+
+    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">Access Token</label>
     <input type="text" id="dbx-token" placeholder="Paste your Dropbox access token" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+
     <label style="display:flex;align-items:center;gap:10px;font-size:14px;color:var(--mid);margin-bottom:14px;cursor:pointer;">
       <input type="checkbox" id="remember-token" style="width:18px;height:18px;accent-color:var(--accent);cursor:pointer;">
       Remember token on this device
@@ -381,7 +389,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
     </div>
     <div class="modal-btns">
       <button class="bbtn mbtn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="bbtn mbtn-go" onclick="uploadToDropbox()">Upload</button>
+      <button class="bbtn mbtn-go" onclick="uploadToDropbox()">Upload Photos</button>
     </div>
     <button onclick="forgetToken()" id="forget-btn" style="display:none;margin-top:14px;width:100%;padding:10px;border:none;background:none;color:#c0392b;font-size:13px;font-family:'DM Sans',sans-serif;cursor:pointer;text-decoration:underline;">
       Forget saved token
@@ -501,14 +509,14 @@ function renderGrid() {
 function deletePhoto(i) { photos.splice(i,1); renderGrid(); }
 
 // ─── PDF ───────────────────────────────────────
-async function generatePDF() {
+function buildPDFDoc() {
   const { jsPDF } = window.jspdf;
   const d = getData();
   const doc = new jsPDF({ orientation:'p', unit:'mm', format:'letter' });
   const M = 20, PW = 215.9;
   let y = M;
 
-  // Header
+  // Header bar
   doc.setFillColor(28,28,30);
   doc.rect(0,0,PW,26,'F');
   doc.setTextColor(255,255,255);
@@ -553,26 +561,34 @@ async function generatePDF() {
 
   addSection('NOTES', d.notes);
   addSection('FHA CONDITIONS', d.fha);
+  // No photos in PDF — photos go to Dropbox separately
+  return doc;
+}
 
-  // Photos page
-  if (photos.length) {
-    doc.addPage(); y = M;
-    doc.setFont('helvetica','bold'); doc.setFontSize(12);
-    doc.setTextColor(181,84,26); doc.text('INSPECTION PHOTOS', M, y); y += 10;
-    const IW=82, IH=62, GAP=9;
-    let col=0;
-    for (const p of photos) {
-      const x = M + col*(IW+GAP);
-      try { doc.addImage(p.dataUrl,'JPEG',x,y,IW,IH); } catch(e){}
-      doc.setFont('helvetica','normal'); doc.setFontSize(8);
-      doc.setTextColor(100,100,100);
-      doc.text(p.name, x, y+IH+4, {maxWidth:IW});
-      col++;
-      if (col>=2) { col=0; y+=IH+14; if(y>245){doc.addPage();y=M;} }
+async function generatePDF() {
+  const doc = buildPDFDoc();
+  const filename = `${streetSlug()}_Appraisal.pdf`;
+
+  // Try iOS Web Share API first (opens native share sheet)
+  if (navigator.share && navigator.canShare) {
+    try {
+      const pdfBlob = doc.output('blob');
+      const file = new File([pdfBlob], filename, { type: 'application/pdf' });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        return;
+      }
+    } catch(e) {
+      if (e.name !== 'AbortError') {
+        // Fall through to download
+      } else {
+        return; // User cancelled share sheet
+      }
     }
   }
 
-  doc.save(`${streetSlug()}_Appraisal.pdf`);
+  // Fallback: standard download
+  doc.save(filename);
   showToast('📄 PDF saved!');
 }
 
@@ -613,17 +629,24 @@ function forgetToken() {
 async function uploadToDropbox() {
   const token = document.getElementById('dbx-token').value.trim();
   if (!token) { showToast('Please paste your Dropbox token'); return; }
+  if (!photos.length) { showToast('No photos to upload'); return; }
+
   if (document.getElementById('remember-token').checked) {
     localStorage.setItem(TOKEN_KEY, token);
   } else {
     localStorage.removeItem(TOKEN_KEY);
   }
+
+  // Use custom folder path or fall back to street address
+  const customFolder = document.getElementById('dbx-folder').value.trim();
+  const folder = customFolder
+    ? (customFolder.startsWith('/') ? customFolder : '/' + customFolder)
+    : '/' + streetSlug();
+
   closeModal();
-  showToast('Uploading…');
+  showToast('Uploading photos…');
 
-  const folder = `/${streetSlug()}`;
   let ok = 0;
-
   for (const p of photos) {
     try {
       const blob = b64toBlob(p.dataUrl);
@@ -631,7 +654,11 @@ async function uploadToDropbox() {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Dropbox-API-Arg': JSON.stringify({path:`${folder}/${p.name}`,mode:'add',autorename:true}),
+          'Dropbox-API-Arg': JSON.stringify({
+            path: `${folder}/${p.name}`,
+            mode: 'add',
+            autorename: true
+          }),
           'Content-Type': 'application/octet-stream'
         },
         body: blob
@@ -640,39 +667,7 @@ async function uploadToDropbox() {
     } catch(e){}
   }
 
-  // Upload notes as .txt
-  try {
-    const d = getData();
-    const txt = [
-      'FIELD APPRAISAL REPORT',
-      '─'.repeat(40),
-      `Street:           ${d.street||'—'}`,
-      `Occupant:         ${d.occupant||'—'}`,
-      `Floor:            ${d.floor||'—'}`,
-      `Exterior:         ${d.exterior||'—'}`,
-      `Kitchen Updates:  ${d.kitchen||'—'}`,
-      `Bathroom Updates: ${d.bathroom||'—'}`,
-      `Patio:            ${d.patio||'—'}`,
-      '',
-      'NOTES:',
-      d.notes||'None',
-      '',
-      'FHA CONDITIONS:',
-      d.fha||'None',
-    ].join('\n');
-
-    await fetch('https://content.dropboxapi.com/2/files/upload', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Dropbox-API-Arg': JSON.stringify({path:`${folder}/${streetSlug()}_notes.txt`,mode:'add',autorename:true}),
-        'Content-Type': 'application/octet-stream'
-      },
-      body: new Blob([txt], {type:'text/plain'})
-    });
-  } catch(e){}
-
-  showToast(`✅ ${ok} photo${ok!==1?'s':''} + notes uploaded to Dropbox`);
+  showToast(`✅ ${ok} of ${photos.length} photos uploaded to Dropbox`);
 }
 
 function b64toBlob(dataURL) {
