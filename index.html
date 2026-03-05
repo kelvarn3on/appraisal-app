@@ -200,6 +200,27 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
   white-space: nowrap; pointer-events: none;
 }
 .toast.show { opacity: 1; }
+
+/* VALIDATION */
+.field-error input,
+.field-error textarea,
+.field-error select,
+.field-error .cb-group {
+  border: 2px solid #c0392b !important;
+  border-radius: 9px;
+}
+.field-error > label {
+  color: #c0392b !important;
+}
+.err-msg {
+  font-size: 12px; color: #c0392b;
+  margin-top: 4px; display: none;
+}
+.field-error .err-msg { display: block; }
+
+/* BUTTON COLORS */
+.bbtn-photo { background: #2D6A4F; color: white; }
+.bbtn-pdf   { background: var(--accent); color: white; }
 </style>
 </head>
 <body>
@@ -219,6 +240,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
   <div class="field">
     <label>Street Address</label>
     <input type="text" id="street" placeholder="e.g. 123 Maple Street" autocomplete="off" autocorrect="off" autocapitalize="words">
+    <div class="err-msg">Street address is required</div>
   </div>
 
   <div class="field">
@@ -232,6 +254,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
         <option>See Notes</option>
       </select>
     </div>
+    <div class="err-msg">Occupant is required</div>
   </div>
 
   <div class="field">
@@ -244,6 +267,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
       <div class="cb-pill" onclick="togglePill(this)"><span class="chk">✓</span>Concrete</div>
       <div class="cb-pill" onclick="togglePill(this)"><span class="chk">✓</span>See Notes</div>
     </div>
+    <div class="err-msg">Select at least one floor type</div>
   </div>
 
   <div class="field">
@@ -255,6 +279,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
       <div class="cb-pill" onclick="togglePill(this)"><span class="chk">✓</span>Stucco</div>
       <div class="cb-pill" onclick="togglePill(this)"><span class="chk">✓</span>See Notes</div>
     </div>
+    <div class="err-msg">Select at least one exterior type</div>
   </div>
 
   <div class="field">
@@ -270,6 +295,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
         <option>Not Updated</option>
       </select>
     </div>
+    <div class="err-msg">Kitchen updates is required</div>
   </div>
 
   <div class="field">
@@ -285,6 +311,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
         <option>Not Updated</option>
       </select>
     </div>
+    <div class="err-msg">Bathroom updates is required</div>
   </div>
 
   <div class="field">
@@ -297,6 +324,7 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
       <div class="cb-pill" onclick="togglePill(this)"><span class="chk">✓</span>Roof</div>
       <div class="cb-pill" onclick="togglePill(this)"><span class="chk">✓</span>See Notes</div>
     </div>
+    <div class="err-msg">Select at least one patio type</div>
   </div>
 
   <div class="field">
@@ -360,21 +388,23 @@ body { font-family: 'DM Sans', sans-serif; color: var(--charcoal); padding-botto
 <!-- BOTTOM BAR -->
 <div class="bottom-bar">
   <button class="bbtn bbtn-clr" onclick="clearAll()">↺ Clear</button>
-  <button class="bbtn bbtn-dbx" onclick="openModal()" style="flex:2;">☁️ Upload to Dropbox</button>
+  <button class="bbtn bbtn-photo" onclick="uploadPhotos()">📷 Photos</button>
+  <button class="bbtn bbtn-pdf" onclick="uploadPDF()">📄 PDF</button>
 </div>
 
-<!-- DROPBOX MODAL -->
+<!-- FOLDER MODAL (shared by both upload buttons) -->
 <div class="overlay" id="modal">
   <div class="modal">
-    <h3>Upload to Dropbox</h3>
-    <p>Uploads all photos + PDF report to <strong>/Appraisals Active/[street address]</strong></p>
-
-    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">Dropbox Folder <span style="font-weight:400;text-transform:none;letter-spacing:0;">(optional override)</span></label>
-    <input type="text" id="dbx-folder" value="/Appraisals Active" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" style="margin-bottom:14px;">
-
+    <h3 id="modal-title">Upload</h3>
+    <p id="modal-desc"></p>
+    <label style="display:block;font-size:11px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:var(--mid);margin-bottom:6px;">
+      Dropbox Base Folder
+    </label>
+    <input type="text" id="dbx-folder" value="/Appraisals Active" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" style="margin-bottom:4px;">
+    <p style="font-size:12px;color:var(--mid);margin-bottom:16px;">Photos/PDF will go into a subfolder named after the street address.</p>
     <div class="modal-btns">
       <button class="bbtn mbtn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="bbtn mbtn-go" onclick="uploadToDropbox()">Upload</button>
+      <button class="bbtn mbtn-go" id="modal-confirm-btn">Confirm</button>
     </div>
   </div>
 </div>
@@ -574,14 +604,12 @@ async function generatePDF() {
   showToast('📄 PDF saved!');
 }
 
-// ─── DROPBOX AUTH (permanent refresh token) ────
-// App credentials — safe to include, no user data here
+// ─── DROPBOX AUTH ──────────────────────────────
 const DBX_APP_KEY    = 'u8w66yg8g0oew46';
 const DBX_APP_SECRET = '3nqtdfhrj88gak4';
 const DBX_REFRESH    = '4g4HS3hatNYAAAAAAAAAAc7mA7h8aMfI3T5alPAsxwFpOOSDhucAOfb0I-xYEqNF';
 
 async function getAccessToken() {
-  // Exchange refresh token for a fresh short-lived access token
   const res = await fetch('https://api.dropbox.com/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -597,31 +625,132 @@ async function getAccessToken() {
   return data.access_token;
 }
 
+// ─── MODAL ─────────────────────────────────────
+let pendingUploadType = null; // 'photos' or 'pdf'
+
 function openModal()  { document.getElementById('modal').classList.add('open'); }
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 
-async function uploadToDropbox() {
-  closeModal();
-  showToast('Connecting to Dropbox…');
+// ─── VALIDATION ────────────────────────────────
+function clearErrors() {
+  document.querySelectorAll('.field-error').forEach(f => f.classList.remove('field-error'));
+}
 
-  // Get a fresh access token automatically
+function validateStreet() {
+  const street = document.getElementById('street').value.trim();
+  if (!street) {
+    document.getElementById('street').closest('.field').classList.add('field-error');
+    return false;
+  }
+  return true;
+}
+
+function validateAllFields() {
+  clearErrors();
+  let valid = true;
+
+  // Street
+  if (!document.getElementById('street').value.trim()) {
+    document.getElementById('street').closest('.field').classList.add('field-error');
+    valid = false;
+  }
+  // Occupant
+  if (!document.getElementById('occupant').value) {
+    document.getElementById('occupant').closest('.field').classList.add('field-error');
+    valid = false;
+  }
+  // Floor (at least one pill)
+  if (!getPills('floor-group')) {
+    document.getElementById('floor-group').closest('.field').classList.add('field-error');
+    valid = false;
+  }
+  // Exterior
+  if (!getPills('exterior-group')) {
+    document.getElementById('exterior-group').closest('.field').classList.add('field-error');
+    valid = false;
+  }
+  // Kitchen
+  if (!document.getElementById('kitchen').value) {
+    document.getElementById('kitchen').closest('.field').classList.add('field-error');
+    valid = false;
+  }
+  // Bathroom
+  if (!document.getElementById('bathroom').value) {
+    document.getElementById('bathroom').closest('.field').classList.add('field-error');
+    valid = false;
+  }
+  // Patio
+  if (!getPills('patio-group')) {
+    document.getElementById('patio-group').closest('.field').classList.add('field-error');
+    valid = false;
+  }
+
+  if (!valid) {
+    showToast('⚠️ Please fill in all highlighted fields');
+    // Scroll to first error
+    const first = document.querySelector('.field-error');
+    if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  return valid;
+}
+
+// ─── PHOTO UPLOAD ──────────────────────────────
+function uploadPhotos() {
+  clearErrors();
+  if (!validateStreet()) {
+    showToast('⚠️ Street address is required');
+    document.getElementById('street').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (!photos.length) {
+    showToast('No photos to upload');
+    return;
+  }
+  pendingUploadType = 'photos';
+  document.getElementById('modal-title').textContent = 'Upload Photos';
+  document.getElementById('modal-desc').innerHTML =
+    `Uploading <strong>${photos.length} photo${photos.length !== 1 ? 's' : ''}</strong> to Dropbox. Photos will be cleared after upload.`;
+  document.getElementById('modal-confirm-btn').onclick = confirmUpload;
+  openModal();
+}
+
+// ─── PDF UPLOAD ────────────────────────────────
+function uploadPDF() {
+  if (!validateAllFields()) return;
+  pendingUploadType = 'pdf';
+  document.getElementById('modal-title').textContent = 'Upload PDF Report';
+  document.getElementById('modal-desc').innerHTML =
+    `Uploads the inspection report PDF for <strong>${document.getElementById('street').value.trim()}</strong> to Dropbox.`;
+  document.getElementById('modal-confirm-btn').onclick = confirmUpload;
+  openModal();
+}
+
+// ─── CONFIRM UPLOAD ────────────────────────────
+async function confirmUpload() {
+  closeModal();
+
   let token;
   try {
+    showToast('Connecting…');
     token = await getAccessToken();
   } catch(e) {
-    showToast('❌ Could not connect to Dropbox. Check internet connection.');
+    showToast('❌ Could not connect to Dropbox');
     return;
   }
 
-  // Base folder + street subfolder
-  const base = document.getElementById('dbx-folder').value.trim() || '/Appraisals Active';
+  const base   = document.getElementById('dbx-folder').value.trim() || '/Appraisals Active';
   const folder = base.replace(/\/+$/, '') + '/' + streetSlug();
 
-  showToast('Uploading…');
+  if (pendingUploadType === 'photos') {
+    await doPhotoUpload(token, folder);
+  } else {
+    await doPDFUpload(token, folder);
+  }
+}
 
-  let photoOk = 0;
-
-  // Upload photos
+async function doPhotoUpload(token, folder) {
+  showToast('Uploading photos…');
+  let ok = 0;
   for (const p of photos) {
     try {
       const blob = b64toBlob(p.dataUrl);
@@ -638,14 +767,21 @@ async function uploadToDropbox() {
         },
         body: blob
       });
-      if (res.ok) photoOk++;
+      if (res.ok) ok++;
     } catch(e) {}
   }
 
-  // Build and upload PDF
-  let pdfOk = false;
+  // Clear photos only — keep all checklist data
+  photos.length = 0;
+  renderGrid();
+
+  showToast(`✅ ${ok} photo${ok !== 1 ? 's' : ''} uploaded — photos cleared`);
+}
+
+async function doPDFUpload(token, folder) {
+  showToast('Generating & uploading PDF…');
   try {
-    const doc = buildPDFDoc();
+    const doc     = buildPDFDoc();
     const pdfBlob = doc.output('blob');
     const pdfName = `${streetSlug()}_Appraisal.pdf`;
     const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
@@ -661,21 +797,14 @@ async function uploadToDropbox() {
       },
       body: pdfBlob
     });
-    if (res.ok) pdfOk = true;
-  } catch(e) {}
-
-  const photoMsg = photos.length ? `${photoOk}/${photos.length} photos` : '0 photos';
-  const pdfMsg   = pdfOk ? ' + PDF' : '';
-  showToast(`✅ Uploaded ${photoMsg}${pdfMsg} to Dropbox`);
-}
-
-function b64toBlob(dataURL) {
-  const [h,d] = dataURL.split(',');
-  const mime = h.match(/:(.*?);/)[1];
-  const bin = atob(d);
-  const arr = new Uint8Array(bin.length);
-  for (let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
-  return new Blob([arr],{type:mime});
+    if (res.ok) {
+      showToast('✅ PDF uploaded to Dropbox');
+    } else {
+      showToast('❌ PDF upload failed — try again');
+    }
+  } catch(e) {
+    showToast('❌ PDF upload failed — try again');
+  }
 }
 
 // ─── CLEAR ─────────────────────────────────────
